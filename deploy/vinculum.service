@@ -1,0 +1,21 @@
+[Unit]
+Description=Vinculum query API
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=exec
+User=vinculum
+Group=vinculum
+WorkingDirectory=/etc/vinculum
+ExecStart=/opt/vinculum/.venv/bin/vinculum serve --config /etc/vinculum/config.json
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target

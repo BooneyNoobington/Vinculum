@@ -1,0 +1,25 @@
+{
+  "endpoints": {
+    "time_series": {
+      "description": "Get measurements for one series in a half-open UTC time window.",
+      "database_connection": "local_sqlite",
+      "query_file": "queries/time_series.sql",
+      "parameters": {
+        "series_id": "integer",
+        "start": "string",
+        "end": "string"
+      },
+      "max_duration": 2,
+      "max_rows": 1000
+    },
+    "time_series_many": {
+      "description": "Get measurements for a list of series IDs.",
+      "database_connection": "local_sqlite",
+      "query_file": "queries/time_series_many.sql",
+      "parameters": {
+        "series_ids": "integer_list"
+      },
+      "max_duration": 2
+    }
+  }
+}
