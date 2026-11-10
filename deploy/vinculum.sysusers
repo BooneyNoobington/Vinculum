@@ -1,0 +1,3 @@
+# /etc/sysusers.d/vinculum.conf
+# A system user and group for Vinculum, without a login or a home directory.
+u vinculum - "Vinculum"
