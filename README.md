@@ -1,18 +1,34 @@
 # Vinculum
 
-Vinculum serves read-only database queries over an authenticated JSON API. You define each query in a SQL file, select its database in configuration, and give the endpoint a name. Applications can call endpoints such as `POST /queries/time_series` with named values. Vinculum validates the values, binds them through SQLAlchemy, and returns rows and result metadata.
+Vinculum serves read-only database queries over an authenticated JSON API. You define each query in a SQL file, select its database in configuration, and give the endpoint a name. Applications can call endpoints such as `POST /v1/queries/time_series` with named values. Vinculum validates the values, binds them through SQLAlchemy, and returns rows and result metadata.
 
 A single instance can query SQLite, PostgreSQL, MySQL, MariaDB, and Oracle. Each named connection has its own pool and queue. Swagger UI and OpenAPI describe the configured routes and parameters.
 
-## Quick start with SQLite
+## Install
 
-Use Python 3.11 or later. Run these commands from the repository root.
+Use Python 3.11 or later. From the repository root, install with pipx to put `vinculum` on your user's PATH in an isolated environment. Run `pipx ensurepath` once and open a new shell to pick up any PATH changes. [pipx installation guide](https://pipx.pypa.io/latest/installation/)
+
+```bash
+pipx ensurepath
+pipx install .
+```
+
+For a database driver, add its install extra when installing, for example `pipx install '.[postgres]'` or `pipx install '.[all]'`. Use `pipx install --force '.[postgres]'` to reinstall from updated source, choosing the same extra.
+
+You can also use a project virtual environment.
 
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install .
-python example/seed_demo.py
+```
+
+## Quick start with SQLite
+
+From the repository root, seed the demo and generate an API token.
+
+```bash
+python3 example/seed_demo.py
 vinculum token
 ```
 
@@ -22,10 +38,10 @@ Put the generated **SHA-256 digest** in `example/config.json` in place of `REPLA
 vinculum serve --config example/config.json
 ```
 
-Open [Swagger UI](http://127.0.0.1:8000/docs) and paste the bearer token into **Authorize**. To call the same route from a shell, replace `YOUR_BEARER_TOKEN` below.
+Open [Swagger UI](http://127.0.0.1:8000/v1/docs) and paste the bearer token into **Authorize**. To call the same route from a shell, replace `YOUR_BEARER_TOKEN` below.
 
 ```bash
-curl -fsS http://127.0.0.1:8000/queries/time_series \
+curl -fsS http://127.0.0.1:8000/v1/queries/time_series \
   -H 'Authorization: Bearer YOUR_BEARER_TOKEN' \
   -H 'Content-Type: application/json' \
   -d '{"series_id":1,"start":"2026-01-01T00:00:00Z","end":"2026-01-02T00:00:00Z"}'
@@ -42,7 +58,17 @@ curl -fsS http://127.0.0.1:8000/queries/time_series \
 }
 ```
 
-`GET /health` reports API liveness. `/docs`, `/redoc`, and `/openapi.json` are public. Query routes use bearer authentication.
+## API routes
+
+| Route | Purpose | Authentication |
+| --- | --- | --- |
+| `POST /v1/queries/{name}` | Run a configured query | Bearer token |
+| `GET /v1/docs` | Swagger UI | Public |
+| `GET /v1/redoc` | ReDoc | Public |
+| `GET /v1/openapi.json` | OpenAPI schema | Public |
+| `GET /health` | API liveness | Public |
+
+Vinculum generates an `X-Request-ID` response header for each request and records the same ID in its request log. Responses with an `error` object also include the ID in `error.request_id`.
 
 ## Configure a deployment
 
@@ -65,13 +91,13 @@ Generate separate tokens for each client and deployment. Store their digests und
 | MariaDB 10.11+ | `mariadb` | `mysql` | [config.mariadb.json](example/connections/config.mariadb.json) |
 | Oracle 19c+ | `oracle` | `oracle` | [config.oracle.json](example/connections/config.oracle.json) |
 
-Install one driver with a command such as `python -m pip install '.[postgres]'` or all drivers with `python -m pip install '.[all]'`. The [database connection guide](docs/database-connections.md) walks through the examples, a read-only account for each server, and a query that verifies the connection.
+Pass the extra to your installer, for example `pipx install '.[postgres]'` or `python -m pip install '.[postgres]'` in your virtual environment. The [database connection guide](docs/database-connections.md) walks through the examples, a read-only account for each server, and a query that verifies the connection.
 
 Vinculum opens and checks every configured database during startup. Use one connection alias per database when routes should share a pool. For separate instances on the same host, give each instance its own config directory, service name, and `--port`.
 
 ### Publish a query
 
-Add a named entry under `endpoints` in the endpoints file. It becomes a route under `/queries/`. This example uses the SQLite demo connection and its supplied SQL file.
+Add a named entry under `endpoints` in the endpoints file. It becomes a route under `/v1/queries/`. This example uses the SQLite demo connection and its supplied SQL file.
 
 ```json
 {
@@ -113,15 +139,37 @@ Use dedicated database read accounts and keep the SQL templates under deployment
 
 ## Deploy with systemd
 
-The included [service unit](deploy/vinculum.service) runs a single process as an unprivileged user and binds to `127.0.0.1:8000`. For a new installation on Debian or a similar Linux distribution, run from the repository root. Use the install extra for your database or `.[all]` for several drivers.
+The included [service unit](deploy/vinculum.service) runs a single process as an unprivileged user and binds to `127.0.0.1:8000`. For a new installation on Debian or a similar Linux distribution, run from the repository root.
 
 ```bash
 sudo useradd --system --user-group --home-dir /nonexistent --shell /usr/sbin/nologin vinculum
+sudo install -d -o root -g vinculum -m 0750 /etc/vinculum /etc/vinculum/queries
+sudo install -m 0644 deploy/vinculum.service /etc/systemd/system/vinculum.service
+```
+
+Install Vinculum with one of the following methods. Choose the extra for your database or `.[all]` for all drivers.
+
+For a system-wide pipx installation, use `--global` so the executable is available to the service user outside home directories.
+
+```bash
+sudo pipx install --global '.[postgres]'
+sudo systemctl edit vinculum
+```
+
+Put these lines in the drop-in, using your actual global executable path if you customized pipx's bin directory.
+
+```ini
+[Service]
+ExecStart=
+ExecStart=/usr/local/bin/vinculum serve --config /etc/vinculum/config.json
+```
+
+The included unit's default executable path is in a virtual environment under `/opt/vinculum`. To use that path, install with these commands.
+
+```bash
 sudo install -d -m 0755 /opt/vinculum
 sudo python3 -m venv /opt/vinculum/.venv
 sudo /opt/vinculum/.venv/bin/python -m pip install '.[postgres]'
-sudo install -d -o root -g vinculum -m 0750 /etc/vinculum /etc/vinculum/queries
-sudo install -m 0644 deploy/vinculum.service /etc/systemd/system/vinculum.service
 ```
 
 Place the config, endpoint definitions, and query files under `/etc/vinculum` and give the service group read access. Make `.env` owned by `root:vinculum` with mode `0640`. For SQLite, use a readable path such as `/var/lib/vinculum/cache.db`. The unit restricts home directory access.
@@ -133,17 +181,21 @@ sudo systemctl status vinculum
 curl -fsS http://127.0.0.1:8000/health
 ```
 
-For an upgrade, install from the updated repository and restart the service. Keep your deployment configuration in its separate directory.
+For an upgrade, run the matching install command from the updated repository, then restart the service. Keep your deployment configuration in its separate directory.
+
+| Installation | Example upgrade command |
+| --- | --- |
+| System-wide pipx | `sudo pipx install --global --force '.[postgres]'` |
+| Service virtual environment | `sudo /opt/vinculum/.venv/bin/python -m pip install --upgrade '.[postgres]'` |
 
 ```bash
-sudo /opt/vinculum/.venv/bin/python -m pip install --upgrade .
 sudo systemctl restart vinculum
 sudo journalctl -u vinculum -n 50 --no-pager
 ```
 
 ## Serve through a reverse proxy
 
-Terminate HTTPS at the proxy. For a subdomain, route the full site to Vinculum. For a mount such as `/vinculum`, strip that prefix before forwarding. `--root-path /vinculum` sets the public prefix for application redirects. Swagger UI and ReDoc resolve the schema relative to the docs page, so the same route must forward `/vinculum/openapi.json`.
+Terminate HTTPS at the proxy. For a subdomain, route the full site to Vinculum. For a mount such as `/vinculum`, strip `/vinculum` before forwarding and pass `/v1` through. `--root-path /vinculum` sets the public prefix for application redirects. Swagger UI and ReDoc resolve the schema relative to the docs page, so the same proxy rule must forward `/vinculum/v1/openapi.json`.
 
 For Caddy on a dedicated subdomain, use this site block.
 
@@ -156,7 +208,7 @@ vinculum.example.org {
 For a path on an existing Caddy site, add the redirect and handler inside that site's block. See [Caddy's `handle_path` reference](https://caddyserver.com/docs/caddyfile/directives/handle_path).
 
 ```caddyfile
-redir /vinculum /vinculum/docs 308
+redir /vinculum /vinculum/v1/docs 308
 handle_path /vinculum/* {
     reverse_proxy 127.0.0.1:8000
 }
@@ -166,7 +218,7 @@ For Nginx, put this inside the existing HTTPS server block. The trailing slash i
 
 ```nginx
 location = /vinculum {
-    return 308 /vinculum/docs;
+    return 308 /vinculum/v1/docs;
 }
 location /vinculum/ {
     proxy_set_header Host $host;
@@ -191,10 +243,18 @@ VINCULUM_CA_BUNDLE="C:/Users/your-name/certs/api-ca.pem"
 Start with local `/health`, then request the public URL through the proxy. After that, call a query or the [database probe](docs/database-connections.md#run-a-connection-probe) with a bearer token. These checks separate startup, routing, and query execution.
 
 - **Service exits on startup.** Read `journalctl -u vinculum -n 50` and check driver extras, paths, password variables, database reachability, and the strict grant audit.
-- **Swagger reports a schema 404.** Request `/vinculum/openapi.json` directly and check the proxy's prefix rule.
+- **Swagger reports a schema 404.** Request `/vinculum/v1/openapi.json` directly and check the proxy's prefix rule.
 - **HTTP 403 through a corporate network.** Check the response headers and body for a proxy denial. Compare the same host, method, and path with the command-line request.
 
 Use `error.code` for client logic and `error.message` for details. Requests have a 64 KiB body limit. Authenticated database failures can include the driver's message, including internal names or values.
+
+Use `curl -i` to see `X-Request-ID` alongside the response body. To find the request in the systemd journal, replace `REQUEST_ID` with that value.
+
+```bash
+sudo journalctl -u vinculum --grep 'request_id=REQUEST_ID'
+```
+
+Request logs include the ID, HTTP method, matched route, and status. For a 404 on an unknown route, the route field is `-`.
 
 | HTTP | Error code | Check |
 | --- | --- | --- |
@@ -204,6 +264,7 @@ Use `error.code` for client logic and `error.message` for details. Requests have
 | 415 | `unsupported_media_type` | `Content-Type: application/json` for a request body |
 | 422 | `invalid_parameters` | JSON keys and types against OpenAPI. List types expect arrays, including for a single value. |
 | 500 | `invalid_result` | Unique SQL column aliases and supported result values |
+| 500 | `internal_error` | Journal entries for the request ID |
 | 502 | `query_failed` | Driver message, SQL template, and read grants |
 | 503 | `database_busy` | Pool and queue saturation for the source used by the route |
 | 503 | `database_unavailable` | Database connectivity and login |

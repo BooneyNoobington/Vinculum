@@ -12,12 +12,12 @@ Vinculum names each database under `connections` in the main JSON config. A quer
 | MariaDB | [config.mariadb.json](../example/connections/config.mariadb.json) | TCP host and port, database, login, and `VINCULUM_MARIADB_PASSWORD` |
 | Oracle | [config.oracle.json](../example/connections/config.oracle.json) | Easy Connect DSN, login, and `VINCULUM_ORACLE_PASSWORD` |
 
-These files use the configuration schema from Vinculum 0.1.1. JSON files accept unique keys and the fields supported by the selected `type`. The placeholder hosts, logins, and digest should be replaced for your deployment.
+JSON files accept unique keys and the fields supported by the selected `type`. Replace the placeholder hosts, logins, and digest for your deployment.
 
 ## Run a connection probe
 
-1. From the repository root, install the extra for your backend, such as `python -m pip install '.[postgres]'`. MySQL and MariaDB both use `.[mysql]`. Oracle uses `.[oracle]`. SQLite is included with the base install.
-2. Select one of the config files and set its connection values. For the SQLite example, first run `python example/seed_demo.py`. For a network database, use a dedicated read account and put the referenced password variable in `example/connections/.env` or in the service process environment. See [.env.example](../example/connections/.env.example).
+1. From the repository root, install the extra for your backend, for example with `pipx install '.[postgres]'` or `python -m pip install '.[postgres]'` in your virtual environment. MySQL and MariaDB both use `.[mysql]`. Oracle uses `.[oracle]`. SQLite is included with the base install.
+2. Select one of the config files and set its connection values. For the SQLite example, first run `python3 example/seed_demo.py`. For a network database, use a dedicated read account and put the referenced password variable in `example/connections/.env` or in the service process environment. See [.env.example](../example/connections/.env.example).
 3. Run `vinculum token`, replace `REPLACE_WITH_SHA256_DIGEST` in the selected config with its digest, and keep the raw bearer token for the request.
 
 Start the selected example. This PostgreSQL command uses port 8001 so it can run alongside an instance on port 8000.
@@ -29,7 +29,7 @@ vinculum serve --config example/connections/config.postgres.json --port 8001
 The configured probe runs a simple `SELECT` over the selected connection. Replace `YOUR_BEARER_TOKEN` with the token you generated.
 
 ```bash
-curl -fsS http://127.0.0.1:8001/queries/database_probe \
+curl -fsS http://127.0.0.1:8001/v1/queries/database_probe \
   -H 'Authorization: Bearer YOUR_BEARER_TOKEN' \
   -H 'Content-Type: application/json' \
   -d '{}'

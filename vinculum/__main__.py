@@ -2,6 +2,7 @@ import argparse
 import hashlib
 import re
 import secrets
+from copy import deepcopy
 from pathlib import Path
 
 import uvicorn
@@ -34,6 +35,12 @@ def main() -> None:
     except ConfigError as exc:
         parser.exit(1, f"vinculum: {exc}\n")
 
+    log_config = deepcopy(uvicorn.config.LOGGING_CONFIG)
+    log_config["loggers"]["vinculum"] = {
+        "handlers": ["default"],
+        "level": "INFO",
+        "propagate": False,
+    }
     uvicorn.run(
         app,
         host=args.host,
@@ -42,6 +49,7 @@ def main() -> None:
         workers=1,
         forwarded_allow_ips="127.0.0.1,::1",
         access_log=False,
+        log_config=log_config,
     )
 
 

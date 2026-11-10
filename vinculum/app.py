@@ -5,6 +5,7 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import anyio
 from fastapi import Depends, FastAPI, Request, Security
@@ -20,6 +21,8 @@ from .database import Database, QueryFailure, make_engine
 from .queries import Query, compile_query
 
 log = logging.getLogger(__name__)
+API_PREFIX = "/v1"
+REQUEST_ID_HEADER = "X-Request-ID"
 MAX_REQUEST_BYTES = 64 * 1024
 ERRORS = {
     "unauthorized": (401, "A valid bearer token is required."),
@@ -32,6 +35,7 @@ ERRORS = {
     "query_timeout": (504, "The query exceeded its time limit."),
     "query_failed": (502, "The configured query could not be completed."),
     "invalid_result": (500, "The configured query could not produce a JSON result."),
+    "internal_error": (500, "An unexpected error occurred while handling the request."),
 }
 
 
@@ -42,6 +46,7 @@ class APIError(Exception):
 class ErrorDetail(BaseModel):
     code: str
     message: str
+    request_id: str
 
 
 class ErrorResponse(BaseModel):
@@ -121,7 +126,9 @@ def create_app(config_file: Path) -> FastAPI:
         lifespan=lifespan,
         docs_url=None,
         redoc_url=None,
-        servers=[{"url": "."}],
+        openapi_url=f"{API_PREFIX}/openapi.json",
+        # The schema is one level below the deployment root. Its paths include /v1.
+        servers=[{"url": ".."}],
         root_path_in_servers=False,
     )
     bearer = HTTPBearer(auto_error=False, scheme_name="BearerAuth")
@@ -141,25 +148,54 @@ def create_app(config_file: Path) -> FastAPI:
 
     @app.exception_handler(APIError)
     @app.exception_handler(QueryFailure)
-    async def error_response(_request: Request, exc: APIError | QueryFailure):
+    async def error_response(request: Request, exc: APIError | QueryFailure):
         code, *details = exc.args
         status, message = ERRORS[code]
         if details:
             message = f"{message} {details[0]}"
         headers = {"WWW-Authenticate": "Bearer"} if status == 401 else None
         return JSONResponse(
-            {"error": {"code": code, "message": message}}, status_code=status, headers=headers
+            {"error": {"code": code, "message": message, "request_id": request.state.request_id}},
+            status_code=status,
+            headers=headers,
         )
 
-    @app.get("/docs", include_in_schema=False)
+    @app.middleware("http")
+    async def identify_request(request: Request, call_next):
+        request_id = uuid4().hex
+        request.state.request_id = request_id
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            log.error("request_id=%s unexpected_error=%s", request_id, type(exc).__name__)
+            response = await error_response(request, APIError("internal_error"))
+        response.headers[REQUEST_ID_HEADER] = request_id
+        route = request.scope.get("route")
+        log.info(
+            "request_id=%s method=%s route=%s status=%s",
+            request_id,
+            request.method,
+            getattr(route, "path", "-"),
+            response.status_code,
+        )
+        return response
+
+    @app.get(f"{API_PREFIX}/docs", include_in_schema=False)
     async def swagger():
         return get_swagger_ui_html(openapi_url="openapi.json", title="Vinculum - Swagger UI")
 
-    @app.get("/redoc", include_in_schema=False)
+    @app.get(f"{API_PREFIX}/redoc", include_in_schema=False)
     async def redoc():
         return get_redoc_html(openapi_url="openapi.json", title="Vinculum - ReDoc")
 
-    @app.get("/health", tags=["Health"])
+    request_id_headers = {
+        REQUEST_ID_HEADER: {
+            "description": "Server-generated ID for this request.",
+            "schema": {"type": "string"},
+        }
+    }
+
+    @app.get("/health", tags=["Health"], responses={200: {"headers": request_id_headers}})
     async def health():
         return {"status": "ok"}
 
@@ -176,19 +212,26 @@ def create_app(config_file: Path) -> FastAPI:
             except QueryFailure:
                 raise
             except Exception as exc:
-                log.error("Endpoint %s failed (%s).", query.name, type(exc).__name__)
+                log.error(
+                    "request_id=%s endpoint=%s invalid_result=%s",
+                    request.state.request_id,
+                    query.name,
+                    type(exc).__name__,
+                )
                 raise APIError("invalid_result") from None
             return Response(payload, media_type="application/json")
 
         return execute
 
     responses = {
-        status: {"model": ErrorResponse, "description": description}
+        status: {"model": ErrorResponse, "description": description, "headers": request_id_headers}
         for status, description in ERRORS.values()
     }
+    responses[200] = {"headers": request_id_headers}
+    responses[500]["description"] = "The query service could not produce a result."
     for query in queries:
         app.add_api_route(
-            f"/queries/{query.name}",
+            f"{API_PREFIX}/queries/{query.name}",
             handler(query),
             methods=["POST"],
             name=f"query_{query.name}",

@@ -1,11 +1,13 @@
 import asyncio
 import hashlib
 import json
+import logging
 import re
 import sqlite3
 from contextlib import asynccontextmanager
 from threading import Event
 from urllib.parse import urljoin
+from uuid import UUID
 
 import httpx
 import pytest
@@ -73,33 +75,35 @@ def test_bearer_body_and_public_openapi(config_file):
     async def scenario():
         async with api_client(config_file, root_path="/vinculum") as client:
             assert (await client.get("/health")).json() == {"status": "ok"}
-            schema = await client.get("/openapi.json")
+            schema = await client.get("/v1/openapi.json")
             assert "private_" not in schema.text
-            operation = schema.json()["paths"]["/queries/lookup"]["post"]
+            operation = schema.json()["paths"]["/v1/queries/lookup"]["post"]
             assert operation["security"] == [{"BearerAuth": []}]
+            for status in ("200", "401", "422", "500"):
+                assert "X-Request-ID" in operation["responses"][status]["headers"]
             body = operation["requestBody"]["content"]["application/json"]["schema"]
             assert body["properties"]["ids"]["items"] == {"type": "integer"}
 
-            response = await client.post(f"/queries/lookup?token={TOKEN}", json={"ids": [1]})
+            response = await client.post(f"/v1/queries/lookup?token={TOKEN}", json={"ids": [1]})
             assert response.status_code == 401
             assert response.headers["WWW-Authenticate"] == "Bearer"
 
-            response = await client.post("/queries/lookup", headers=AUTH, json={"ids": ["1 OR 1=1"]})
+            response = await client.post("/v1/queries/lookup", headers=AUTH, json={"ids": ["1 OR 1=1"]})
             assert response.status_code == 422
             assert "ids[0]" in response.json()["error"]["message"]
             assert "valid integer" in response.json()["error"]["message"]
             assert "OR 1" not in response.text
 
-            response = await client.post("/queries/lookup", headers=AUTH, json={"id": [1]})
+            response = await client.post("/v1/queries/lookup", headers=AUTH, json={"id": [1]})
             assert response.status_code == 422
             assert "Missing required parameters 'ids'" in response.text
             assert "Unexpected parameters 'id'" in response.text
 
-            response = await client.post("/queries/lookup", headers=AUTH, json={"ids": [1, 2]})
+            response = await client.post("/v1/queries/lookup", headers=AUTH, json={"ids": [1, 2]})
             assert response.json() == {
                 "rows": [{"label": "first"}], "row_count": 1, "truncated": True
             }
-            response = await client.post("/queries/lookup", headers=AUTH, json={"ids": []})
+            response = await client.post("/v1/queries/lookup", headers=AUTH, json={"ids": []})
             assert response.json() == {"rows": [], "row_count": 0, "truncated": False}
 
     asyncio.run(scenario())
@@ -113,16 +117,61 @@ def test_docs_urls_resolve_under_the_public_prefix(config_file, prefix, root_pat
 
     async def scenario():
         async with api_client(config_file, root_path=root_path) as client:
-            public_base = f"https://proxy.test{prefix}/"
+            public_base = f"https://proxy.test{prefix}"
             for page, pattern in [("docs", r"url: '([^']+)'"), ("redoc", r'spec-url="([^"]+)"')]:
-                response = await client.get(f"/{page}")
+                docs_path = f"/v1/{page}"
+                response = await client.get(docs_path)
                 assert response.status_code == 200
                 schema_url = re.search(pattern, response.text)[1]
-                assert urljoin(public_base + page, schema_url) == public_base + "openapi.json"
+                assert urljoin(public_base + docs_path, schema_url) == public_base + "/v1/openapi.json"
 
-            schema = (await client.get("/openapi.json")).json()
-            server = urljoin(public_base + "openapi.json", schema["servers"][0]["url"])
-            assert server == public_base
+            schema = (await client.get("/v1/openapi.json")).json()
+            server = urljoin(public_base + "/v1/openapi.json", schema["servers"][0]["url"])
+            assert server == public_base + "/"
+
+    asyncio.run(scenario())
+
+
+def test_request_ids_correlate_success_errors_and_logs(config_file, caplog):
+    configure_endpoints(config_file, {"lookup": ("SELECT 1 AS value", {})})
+    caplog.set_level(logging.INFO, logger="vinculum.app")
+
+    async def scenario():
+        async with api_client(config_file) as client:
+            path = "/v1/queries/lookup"
+            ok = await client.post(path, headers={**AUTH, "X-Request-ID": "client-id"})
+            denied = await client.post(path, params={"token": TOKEN})
+            missing = await client.post("/queries/lookup", headers=AUTH)
+            assert (ok.status_code, denied.status_code, missing.status_code) == (200, 401, 404)
+            ids = {response.headers["X-Request-ID"] for response in (ok, denied, missing)}
+            assert len(ids) == 3
+            assert all(UUID(value).version == 4 for value in ids)
+
+            request_id = denied.headers["X-Request-ID"]
+            assert denied.json()["error"]["request_id"] == request_id
+            assert f"request_id={request_id} method=POST route={path} status=401" in caplog.text
+            assert TOKEN not in caplog.text
+
+    asyncio.run(scenario())
+
+
+def test_unhandled_errors_get_a_request_id(config_file, monkeypatch, caplog):
+    configure_endpoints(config_file, {"lookup": ("SELECT 1 AS value", {})})
+
+    async def fail(_request):
+        raise RuntimeError("private exception details")
+
+    monkeypatch.setattr("vinculum.app.read_body", fail)
+
+    async def scenario():
+        async with api_client(config_file) as client:
+            response = await client.post("/v1/queries/lookup", headers=AUTH)
+            request_id = response.headers["X-Request-ID"]
+            assert response.status_code == 500
+            assert response.json()["error"]["code"] == "internal_error"
+            assert response.json()["error"]["request_id"] == request_id
+            assert f"request_id={request_id} unexpected_error=RuntimeError" in caplog.text
+            assert "private exception details" not in response.text + caplog.text
 
     asyncio.run(scenario())
 
@@ -134,11 +183,11 @@ def test_database_failure_includes_the_driver_message(config_file, caplog):
 
     async def scenario():
         async with api_client(config_file) as client:
-            response = await client.post("/queries/broken", json={"value": "secret"})
+            response = await client.post("/v1/queries/broken", json={"value": "secret"})
             assert response.status_code == 401
             assert "private_missing_table" not in response.text
 
-            response = await client.post("/queries/broken", headers=AUTH, json={"value": "secret"})
+            response = await client.post("/v1/queries/broken", headers=AUTH, json={"value": "secret"})
             assert response.status_code == 502
             assert response.json()["error"]["code"] == "query_failed"
             assert "no such table: private_missing_table" in response.json()["error"]["message"]
@@ -157,7 +206,7 @@ def test_invalid_json_reports_location_or_duplicate_key(config_file):
             headers = {**AUTH, "Content-Type": "application/json"}
             for body, detail in [(' {"id": }', "line 1, column"),
                                  ('{"id": 1, "id": 2}', "Duplicate JSON key 'id'")]:
-                response = await client.post("/queries/lookup", headers=headers, content=body)
+                response = await client.post("/v1/queries/lookup", headers=headers, content=body)
                 assert response.status_code == 400
                 assert response.json()["error"]["code"] == "invalid_json"
                 assert detail in response.json()["error"]["message"]
@@ -177,10 +226,10 @@ def test_sqlite_timeout_releases_and_resets_the_connection(config_file):
 
     async def scenario():
         async with api_client(config_file) as client:
-            response = await client.post("/queries/slow", headers=AUTH)
+            response = await client.post("/v1/queries/slow", headers=AUTH)
             assert response.status_code == 504
             assert response.json()["error"]["code"] == "query_timeout"
-            response = await client.post("/queries/quick", headers=AUTH)
+            response = await client.post("/v1/queries/quick", headers=AUTH)
             assert response.json()["rows"] == [{"ready": 1}]
 
     asyncio.run(scenario())
