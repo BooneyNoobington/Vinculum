@@ -1,0 +1,21 @@
+{
+  "strict_mode": true,
+  "endpoints_file": "endpoints.json",
+  "tokens": {
+    "local_probe": "REPLACE_WITH_SHA256_DIGEST"
+  },
+  "connections": {
+    "reporting": {
+      "type": "mysql",
+      "host": "mysql.example.internal",
+      "port": 3306,
+      "database": "reporting",
+      "user": "vinculum_reader",
+      "password_env_var": "VINCULUM_MYSQL_PASSWORD",
+      "pool_size": 2,
+      "connect_timeout": 5,
+      "queue_size": 8,
+      "queue_timeout": 3
+    }
+  }
+}

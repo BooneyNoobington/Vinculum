@@ -1,0 +1,11 @@
+{
+  "endpoints": {
+    "database_probe": {
+      "description": "Execute a simple SELECT against the reporting connection.",
+      "database_connection": "reporting",
+      "query_file": "queries/probe-oracle.sql",
+      "max_duration": 5,
+      "max_rows": 1
+    }
+  }
+}

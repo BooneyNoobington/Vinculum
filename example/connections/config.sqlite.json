@@ -1,0 +1,17 @@
+{
+  "strict_mode": true,
+  "endpoints_file": "endpoints.json",
+  "tokens": {
+    "local_probe": "REPLACE_WITH_SHA256_DIGEST"
+  },
+  "connections": {
+    "reporting": {
+      "type": "sqlite",
+      "path": "../demo.sqlite3",
+      "pool_size": 1,
+      "connect_timeout": 5,
+      "queue_size": 8,
+      "queue_timeout": 3
+    }
+  }
+}

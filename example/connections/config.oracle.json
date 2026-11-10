@@ -1,0 +1,19 @@
+{
+  "strict_mode": true,
+  "endpoints_file": "endpoints.oracle.json",
+  "tokens": {
+    "local_probe": "REPLACE_WITH_SHA256_DIGEST"
+  },
+  "connections": {
+    "reporting": {
+      "type": "oracle",
+      "dsn": "oracle.example.internal:1521/REPORTINGPDB",
+      "user": "vinculum_reader",
+      "password_env_var": "VINCULUM_ORACLE_PASSWORD",
+      "pool_size": 1,
+      "connect_timeout": 5,
+      "queue_size": 8,
+      "queue_timeout": 3
+    }
+  }
+}

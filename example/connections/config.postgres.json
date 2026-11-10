@@ -1,0 +1,21 @@
+{
+  "strict_mode": true,
+  "endpoints_file": "endpoints.json",
+  "tokens": {
+    "local_probe": "REPLACE_WITH_SHA256_DIGEST"
+  },
+  "connections": {
+    "reporting": {
+      "type": "postgres",
+      "host": "pg.example.internal",
+      "port": 5432,
+      "database": "reporting",
+      "user": "vinculum_reader",
+      "password_env_var": "VINCULUM_POSTGRES_PASSWORD",
+      "pool_size": 2,
+      "connect_timeout": 5,
+      "queue_size": 8,
+      "queue_timeout": 3
+    }
+  }
+}
