@@ -85,7 +85,7 @@ class EndpointSettings(SettingsModel):
     query_file: Path
     description: str | None = None
     max_duration: Seconds | None = None
-    max_rows: int = Field(default=1000, ge=1, le=10000, strict=True)
+    max_rows: int = Field(default=1000, ge=1, le=1_100_000, strict=True)
     parameters: dict[BindName, ParameterType] = Field(default_factory=dict)
 
 
