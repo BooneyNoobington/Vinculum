@@ -27,8 +27,8 @@ PARAMETER_TYPES = {
     "decimal": Decimal,
     "date": date,
     "datetime": datetime,
-    "integer_list": Annotated[list[StrictInt], Field(max_length=100)],
-    "string_list": Annotated[list[StrictStr], Field(max_length=100)],
+    "integer_list": Annotated[list[StrictInt], Field(max_length=1_000)],
+    "string_list": Annotated[list[StrictStr], Field(max_length=1_000)],
 }
 SQL_DIALECT = {"postgres": "postgres", "mariadb": "mysql", "mysql": "mysql",
                "oracle": "oracle", "sqlite": "sqlite"}
